@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign Data · 地址权属证明</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #f1f5f9; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .animate-spin { animation: spin 0.8s linear infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useCallback, useRef, useEffect } = React;
+
+    // ── Mock Data ──────────────────────────────────────────────────────────
+    const ADDRESSES = [
+      {
+        id: "eth-1", chain: "ETH", type: "ETH",
+        address: "0x367063EC4B0F8A3B9B04BD3A748B5B0653E",
+        standard: "EIP-191",
+      },
+      {
+        id: "btc-legacy", chain: "BTC", type: "Legacy",
+        address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+        standard: "BIP-137",
+      },
+      {
+        id: "btc-nested", chain: "BTC", type: "Nested SegWit",
+        address: "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",
+        standard: "BIP-137 (兼容)",
+      },
+      {
+        id: "btc-native", chain: "BTC", type: "Native SegWit",
+        address: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+        standard: "BIP-322 Simple",
+      },
+      {
+        id: "btc-taproot", chain: "BTC", type: "Taproot",
+        address: "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr",
+        standard: "BIP-322 Full",
+      },
+    ];
+
+    function truncate(str, head = 6, tail = 5) {
+      if (str.length <= head + tail + 3) return str;
+      return str.slice(0, head) + "..." + str.slice(-tail);
+    }
+
+    function mockSign(addr) {
+      if (addr.chain === "ETH") {
+        return "0x" + Array.from({ length: 130 }, () =>
+          Math.floor(Math.random() * 16).toString(16)).join("");
+      }
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      return Array.from({ length: 87 }, () =>
+        chars[Math.floor(Math.random() * chars.length)]).join("") + "=";
+    }
+
+    // ── Chain Icon ─────────────────────────────────────────────────────────
+    function ChainIcon({ chain, size = 22 }) {
+      if (chain === "ETH") return (
+        <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
+          <circle cx="16" cy="16" r="16" fill="#627EEA" />
+          <path d="M16 5v8.5l7 3.13L16 5z" fill="#fff" fillOpacity=".6" />
+          <path d="M16 5L9 16.63l7-3.13V5z" fill="#fff" />
+          <path d="M16 21.47v5.52l7.01-9.7L16 21.47z" fill="#fff" fillOpacity=".6" />
+          <path d="M16 26.99v-5.52L9 17.29l7 9.7z" fill="#fff" />
+          <path d="M16 20.17l7-3.54-7-3.13v6.67z" fill="#fff" fillOpacity=".2" />
+          <path d="M9 16.63l7 3.54v-6.67L9 16.63z" fill="#fff" fillOpacity=".6" />
+        </svg>
+      );
+      return (
+        <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
+          <circle cx="16" cy="16" r="16" fill="#F7931A" />
+          <path d="M22.5 14.3c.3-2-1.2-3.1-3.3-3.8l.7-2.7-1.6-.4-.6 2.6-1.3-.3.6-2.6-1.6-.4-.7 2.7-1 .3v-.1l-2.2-.6-.4 1.7s1.2.3 1.2.3c.7.2.8.7.7 1l-.8 3.3c.1 0 .1.1.2.1l-.2-.1-1.1 4.3c-.1.2-.3.5-.8.4 0 .1-1.2-.3-1.2-.3l-.8 1.8 2.1.5 1.1.3-.7 2.7 1.6.4.7-2.7 1.3.3-.7 2.7 1.6.4.7-2.8c2.8.5 4.8.3 5.7-2.2.7-2-.1-3.2-1.5-3.9 1.1-.3 1.9-1 2.1-2.5zm-3.8 5.3c-.5 2-3.9 1-5 .7l.9-3.5c1.1.3 4.7.8 4.1 2.8zm.5-5.3c-.5 1.8-3.3 1-4.2.7l.8-3.1c.9.2 3.9.7 3.4 2.4z" fill="#fff" />
+        </svg>
+      );
+    }
+
+    // ── Toggle ─────────────────────────────────────────────────────────────
+    function Toggle({ on, onChange }) {
+      return (
+        <button
+          role="switch"
+          aria-checked={on}
+          onClick={() => onChange(!on)}
+          style={{
+            position: "relative", width: 44, height: 24, borderRadius: 12,
+            border: "none", cursor: "pointer", outline: "none",
+            background: on ? "#111827" : "#E5E7EB",
+            transition: "background 0.2s",
+            flexShrink: 0,
+          }}
+        >
+          <span style={{
+            position: "absolute", top: 2, left: on ? 22 : 2,
+            width: 20, height: 20, borderRadius: "50%", background: "#fff",
+            boxShadow: "0 1px 3px rgba(0,0,0,.2)",
+            transition: "left 0.2s",
+            display: "block",
+          }} />
+        </button>
+      );
+    }
+
+    // ── Address Dropdown ───────────────────────────────────────────────────
+    function AddressDropdown({ value, onChange }) {
+      const [open, setOpen] = useState(false);
+      const ref = useRef(null);
+      const selected = ADDRESSES.find((a) => a.id === value) || ADDRESSES[0];
+
+      useEffect(() => {
+        function handle(e) {
+          if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+        }
+        document.addEventListener("mousedown", handle);
+        return () => document.removeEventListener("mousedown", handle);
+      }, []);
+
+      const groups = [
+        { label: "Ethereum", items: ADDRESSES.filter((a) => a.chain === "ETH") },
+        { label: "Bitcoin",  items: ADDRESSES.filter((a) => a.chain === "BTC") },
+      ];
+
+      return (
+        <div ref={ref} style={{ position: "relative" }}>
+          <button
+            onClick={() => setOpen(!open)}
+            className="w-full flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-3 bg-white hover:border-gray-300 transition-colors"
+            style={{ cursor: "pointer" }}
+          >
+            <ChainIcon chain={selected.chain} size={22} />
+            <span className="flex-1 text-left text-sm font-medium text-gray-900">
+              {truncate(selected.address, 7, 6)}
+            </span>
+            <svg
+              style={{ width: 16, height: 16, color: "#9CA3AF", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s", flexShrink: 0 }}
+              viewBox="0 0 20 20" fill="currentColor"
+            >
+              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+            </svg>
+          </button>
+
+          {open && (
+            <div className="absolute w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden" style={{ zIndex: 50, top: "calc(100% + 4px)" }}>
+              {groups.map((g) => (
+                <div key={g.label}>
+                  <div className="px-3 py-2 bg-gray-50 border-b border-gray-100" style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                    {g.label}
+                  </div>
+                  {g.items.map((addr) => (
+                    <button
+                      key={addr.id}
+                      onClick={() => { onChange(addr.id); setOpen(false); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 transition-colors"
+                      style={{ background: addr.id === value ? "#F9FAFB" : "transparent", cursor: "pointer", border: "none", textAlign: "left" }}
+                    >
+                      <ChainIcon chain={addr.chain} size={20} />
+                      <div className="flex-1" style={{ minWidth: 0 }}>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-gray-900">{truncate(addr.address, 7, 6)}</span>
+                          {addr.chain === "BTC" && (
+                            <span style={{ fontSize: 9, fontWeight: 700, background: "#FEF3C7", color: "#B45309", padding: "2px 6px", borderRadius: 99 }}>
+                              {addr.type}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 10, color: "#9CA3AF", marginTop: 1 }}>{addr.standard}</div>
+                      </div>
+                      {addr.id === value && (
+                        <svg style={{ width: 16, height: 16, color: "#111827", flexShrink: 0 }} viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                        </svg>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Auth Modal ─────────────────────────────────────────────────────────
+    function AuthModal({ onSuccess, onCancel }) {
+      const [mode, setMode] = useState("bio");
+      const [pwd, setPwd]   = useState("");
+      const [err, setErr]   = useState("");
+
+      const confirm = () => {
+        if (mode === "pwd" && pwd.length < 4) { setErr("密码至少 4 位"); return; }
+        onSuccess();
+      };
+
+      return (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+          backdropFilter: "blur(4px)", zIndex: 100,
+          display: "flex", alignItems: "flex-end", justifyContent: "center",
+        }}>
+          <div style={{
+            background: "#fff", width: "100%", maxWidth: 390,
+            borderRadius: "24px 24px 0 0", padding: "16px 20px 32px",
+            boxShadow: "0 -8px 40px rgba(0,0,0,.12)",
+          }}>
+            <div style={{ width: 32, height: 4, background: "#E5E7EB", borderRadius: 99, margin: "0 auto 20px" }} />
+            <p className="text-base font-semibold text-gray-900 text-center" style={{ marginBottom: 4 }}>身份验证</p>
+            <p className="text-center" style={{ fontSize: 12, color: "#9CA3AF", marginBottom: 20 }}>验证后将生成签名</p>
+
+            <div className="flex gap-2 mb-5" style={{ background: "#F3F4F6", padding: 4, borderRadius: 12 }}>
+              {[["bio", "Face ID / 指纹"], ["pwd", "钱包密码"]].map(([k, v]) => (
+                <button key={k} onClick={() => { setMode(k); setErr(""); }}
+                  style={{
+                    flex: 1, padding: "8px 0", borderRadius: 8, border: "none", cursor: "pointer",
+                    fontSize: 12, fontWeight: 500,
+                    background: mode === k ? "#fff" : "transparent",
+                    color: mode === k ? "#111827" : "#6B7280",
+                    boxShadow: mode === k ? "0 1px 4px rgba(0,0,0,.1)" : "none",
+                    transition: "all 0.15s",
+                  }}>
+                  {v}
+                </button>
+              ))}
+            </div>
+
+            {mode === "bio" ? (
+              <div className="flex flex-col items-center" style={{ padding: "20px 0", gap: 12 }}>
+                <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#F3F4F6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28 }}>
+                  🫵
+                </div>
+                <p style={{ fontSize: 12, color: "#6B7280" }}>将手指放在传感器上进行验证</p>
+              </div>
+            ) : (
+              <div style={{ marginBottom: 16 }}>
+                <input type="password" value={pwd} autoFocus
+                  onChange={(e) => { setPwd(e.target.value); setErr(""); }}
+                  placeholder="输入钱包密码"
+                  style={{
+                    width: "100%", border: "1px solid #E5E7EB", borderRadius: 12,
+                    padding: "12px 16px", fontSize: 14, outline: "none", boxSizing: "border-box",
+                  }} />
+                {err && <p style={{ fontSize: 12, color: "#EF4444", marginTop: 6 }}>{err}</p>}
+              </div>
+            )}
+
+            <div className="flex gap-2" style={{ marginTop: 8 }}>
+              <button onClick={onCancel}
+                style={{
+                  flex: 1, padding: "12px 0", borderRadius: 16, border: "1px solid #E5E7EB",
+                  background: "#fff", fontSize: 14, fontWeight: 500, color: "#4B5563", cursor: "pointer",
+                }}>
+                取消
+              </button>
+              <button onClick={confirm}
+                style={{
+                  flex: 1, padding: "12px 0", borderRadius: 16, border: "none",
+                  background: "#111827", fontSize: 14, fontWeight: 600, color: "#fff", cursor: "pointer",
+                }}>
+                {mode === "bio" ? "模拟验证通过" : "确认"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Sign Tab ───────────────────────────────────────────────────────────
+    function SignTab() {
+      const [message, setMessage]     = useState("");
+      const [hexMode, setHexMode]     = useState(false);
+      const [addrId, setAddrId]       = useState("eth-1");
+      const [signature, setSignature] = useState("");
+      const [signing, setSigning]     = useState(false);
+      const [showAuth, setShowAuth]   = useState(false);
+      const [copied, setCopied]       = useState(false);
+      const [msgErr, setMsgErr]       = useState("");
+
+      const selected = ADDRESSES.find((a) => a.id === addrId) || ADDRESSES[0];
+      const hasMsg   = message.trim().length > 0;
+
+      const handleSign = () => {
+        if (!hasMsg) { setMsgErr("请输入待签名消息"); return; }
+        setMsgErr("");
+        setShowAuth(true);
+      };
+
+      const doSign = () => {
+        setShowAuth(false);
+        setSigning(true);
+        setSignature("");
+        setTimeout(() => {
+          setSignature(mockSign(selected));
+          setSigning(false);
+        }, 1000);
+      };
+
+      const handleCopy = useCallback(() => {
+        const fallback = () => {
+          const el = document.createElement("textarea");
+          el.value = signature;
+          document.body.appendChild(el);
+          el.select();
+          document.execCommand("copy");
+          document.body.removeChild(el);
+        };
+        try {
+          if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(signature).catch(fallback);
+          } else { fallback(); }
+        } catch { fallback(); }
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }, [signature]);
+
+      const descMap = {
+        ETH: "Sign a message to prove ownership of your Ethereum address, commonly required by exchanges like OSL.",
+        "Legacy": "Sign with your Legacy (P2PKH) Bitcoin address using BIP-137 standard.",
+        "Nested SegWit": "Sign with your Nested SegWit (P2SH-P2WPKH) address using BIP-137 compatible standard.",
+        "Native SegWit": "Sign with your Native SegWit (bech32) address using BIP-322 Simple standard.",
+        "Taproot": "Sign with your Taproot (P2TR) address using the full BIP-322 implementation with Schnorr signature.",
+      };
+      const desc = descMap[selected.chain === "ETH" ? "ETH" : selected.type] || "";
+
+      return (
+        <>
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {/* Message */}
+            <div style={{ padding: "16px 16px 12px" }}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+                <span className="text-sm font-medium text-gray-800">Message</span>
+                <div className="flex items-center gap-2">
+                  <span style={{ fontSize: 12, color: "#9CA3AF" }}>Hex format</span>
+                  <button
+                    title="If enabled, input will be treated as hexadecimal data"
+                    style={{ width: 16, height: 16, borderRadius: "50%", border: "1px solid #D1D5DB", background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "#9CA3AF", fontWeight: 700, padding: 0 }}
+                  >?</button>
+                  <Toggle on={hexMode} onChange={setHexMode} />
+                </div>
+              </div>
+              <textarea
+                value={message}
+                onChange={(e) => { setMessage(e.target.value); setMsgErr(""); setSignature(""); }}
+                rows={3}
+                placeholder={hexMode ? "0x..." : "Nonce or custom text…"}
+                style={{
+                  width: "100%", border: `1px solid ${msgErr ? "#FCA5A5" : "#E5E7EB"}`,
+                  borderRadius: 12, padding: "12px 14px", fontSize: 14, color: "#111827",
+                  resize: "none", outline: "none", boxSizing: "border-box",
+                  background: msgErr ? "#FEF2F2" : "#fff",
+                  fontFamily: "inherit", transition: "border-color 0.15s",
+                }}
+              />
+              {msgErr
+                ? <p style={{ fontSize: 12, color: "#EF4444", marginTop: 4 }}>{msgErr}</p>
+                : <p style={{ fontSize: 12, color: "#9CA3AF", textAlign: "right", marginTop: 4 }}>{message.length}/1000</p>
+              }
+            </div>
+
+            {/* Divider */}
+            <div style={{ height: 1, background: "#F3F4F6", margin: "0 16px" }} />
+
+            {/* Address */}
+            <div style={{ padding: "12px 16px" }}>
+              <span className="block text-sm font-medium text-gray-800" style={{ marginBottom: 10 }}>Address</span>
+              <AddressDropdown value={addrId} onChange={(id) => { setAddrId(id); setSignature(""); }} />
+              <p style={{ fontSize: 12, color: "#9CA3AF", lineHeight: 1.6, marginTop: 10 }}>{desc}</p>
+            </div>
+
+            {/* Divider */}
+            <div style={{ height: 1, background: "#F3F4F6", margin: "0 16px" }} />
+
+            {/* Signature */}
+            <div style={{ padding: "12px 16px" }}>
+              <span className="block text-sm font-medium text-gray-800" style={{ marginBottom: 10 }}>Signature</span>
+              {signing ? (
+                <div style={{ border: "1px dashed #E5E7EB", borderRadius: 12, padding: "16px 14px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "#F9FAFB" }}>
+                  <span className="animate-spin" style={{ width: 16, height: 16, border: "2px solid #9CA3AF", borderTopColor: "transparent", borderRadius: "50%", display: "inline-block" }} />
+                  <span style={{ fontSize: 14, color: "#9CA3AF" }}>Signing…</span>
+                </div>
+              ) : signature ? (
+                <div style={{ border: "1px solid #E5E7EB", borderRadius: 12, padding: "12px 14px", background: "#F9FAFB" }}>
+                  <p style={{ fontSize: 12, fontFamily: "monospace", color: "#111827", wordBreak: "break-all", lineHeight: 1.6, userSelect: "all", margin: 0 }}>
+                    {signature}
+                  </p>
+                  <button
+                    onClick={handleCopy}
+                    style={{
+                      marginTop: 12, width: "100%", padding: "8px 0", borderRadius: 8, border: "none",
+                      fontSize: 12, fontWeight: 600, cursor: "pointer", transition: "all 0.2s",
+                      background: copied ? "#22C55E" : "#E5E7EB",
+                      color: copied ? "#fff" : "#374151",
+                    }}
+                  >
+                    {copied ? "✓ Copied" : "Copy"}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ border: "1.5px dashed #D1D5DB", borderRadius: 12, padding: "16px 14px", background: "#fff" }}>
+                  <p style={{ fontSize: 14, color: "#D1D5DB", textAlign: "center", margin: 0, userSelect: "none" }}>
+                    Generated after signing
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Security notice */}
+            <div style={{ margin: "0 16px 16px", display: "flex", alignItems: "flex-start", gap: 8, background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: "12px 14px" }}>
+              <span style={{ fontSize: 14, marginTop: 1 }}>🔒</span>
+              <p style={{ fontSize: 12, color: "#92400E", lineHeight: 1.6, margin: 0 }}>
+                签名在本设备本地完成，私钥不会离开安全区域。
+              </p>
+            </div>
+          </div>
+
+          {/* Sign Button */}
+          <div style={{ padding: "8px 16px 24px" }}>
+            <button
+              onClick={handleSign}
+              disabled={signing}
+              style={{
+                width: "100%", padding: "16px 0", borderRadius: 16, border: "none",
+                fontSize: 16, fontWeight: 600, cursor: signing ? "not-allowed" : "pointer",
+                background: signing ? "#E5E7EB" : "#111827",
+                color: signing ? "#9CA3AF" : "#fff",
+                transition: "all 0.15s",
+              }}
+            >
+              {signing ? "Signing…" : "Sign"}
+            </button>
+          </div>
+
+          {showAuth && <AuthModal onSuccess={doSign} onCancel={() => setShowAuth(false)} />}
+        </>
+      );
+    }
+
+    // ── App ────────────────────────────────────────────────────────────────
+    function App() {
+      return (
+        <div style={{ minHeight: "100vh", background: "#F1F5F9", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          {/* Phone shell */}
+          <div style={{
+            width: 390, height: 780, background: "#fff",
+            borderRadius: 44, overflow: "hidden",
+            boxShadow: "0 30px 80px rgba(0,0,0,.18)",
+            display: "flex", flexDirection: "column",
+          }}>
+            {/* Status bar */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 28px 8px", flexShrink: 0 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>17:07</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {/* wifi */}
+                <svg style={{ width: 16, height: 16, color: "#374151" }} viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M1.5 8.5C5.5 4.5 10.5 2.5 12 2.5s6.5 2 10.5 6l-1.5 1.5C17.5 6.5 14 5 12 5s-5.5 1.5-9 5L1.5 8.5z" opacity=".4"/>
+                  <path d="M5 12c1.9-1.9 4.3-3 7-3s5.1 1.1 7 3l-1.5 1.5c-1.5-1.5-3.5-2.5-5.5-2.5s-4 1-5.5 2.5L5 12z" opacity=".7"/>
+                  <path d="M8.5 15.5C9.5 14.5 10.7 14 12 14s2.5.5 3.5 1.5L14 17c-.6-.6-1.2-1-2-1s-1.4.4-2 1l-1.5-1.5z"/>
+                  <circle cx="12" cy="20" r="1.5"/>
+                </svg>
+                {/* battery */}
+                <svg style={{ width: 24, height: 14, color: "#374151" }} viewBox="0 0 25 12" fill="none">
+                  <rect x=".5" y=".5" width="21" height="11" rx="3.5" stroke="currentColor" strokeOpacity=".35"/>
+                  <rect x="1" y="1" width="18" height="10" rx="3" fill="currentColor" fillOpacity=".9"/>
+                  <path d="M23 4v4a2 2 0 000-4z" fill="currentColor" fillOpacity=".4"/>
+                </svg>
+              </div>
+            </div>
+
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", padding: "0 20px 12px", flexShrink: 0 }}>
+              <button style={{ width: 32, height: 32, borderRadius: "50%", border: "none", background: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <svg style={{ width: 20, height: 20, color: "#6B7280" }} viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                </svg>
+              </button>
+              <h1 style={{ flex: 1, textAlign: "center", fontSize: 16, fontWeight: 600, color: "#111827", margin: 0 }}>
+                Sign &amp; verify message
+              </h1>
+              <div style={{ width: 32 }} />
+            </div>
+
+            {/* Content */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+              <SignTab />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
